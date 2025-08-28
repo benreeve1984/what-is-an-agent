@@ -1,0 +1,26 @@
+# Core dependencies for the AI Agent demo notebook
+
+# OpenAI API client
+openai>=1.0.0
+
+# Data manipulation and analysis
+pandas>=2.0.0
+numpy>=1.24.0
+
+# SQL engine for data queries
+duckdb>=0.9.0
+
+# Visualization
+matplotlib>=3.6.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Jupyter notebook
+jupyter>=1.0.0
+notebook>=7.0.0
+ipykernel>=6.25.0
+
+# Optional but recommended for better notebook experience
+ipywidgets>=8.0.0
+jupyterlab>=4.0.0
