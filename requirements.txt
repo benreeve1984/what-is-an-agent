@@ -1,4 +1,4 @@
-# Core dependencies for the AI Agent demo notebook
+# Core dependencies for the AI Agent demo
 
 # OpenAI API client
 openai>=1.0.0
@@ -16,7 +16,10 @@ matplotlib>=3.6.0
 # Environment variable management
 python-dotenv>=1.0.0
 
-# Jupyter notebook
+# Web server for browser mode
+flask>=3.0.0
+
+# Jupyter notebook (for running the original notebook)
 jupyter>=1.0.0
 notebook>=7.0.0
 ipykernel>=6.25.0

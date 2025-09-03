@@ -1,0 +1,8 @@
+{"type": "run_started", "run_id": "test_acceptance", "ts": 1756904316}
+{"type": "step_started", "step": 1, "ts": 1756904316}
+{"type": "model_request", "step": 1, "prompt": "Test prompt", "ts": 1756904316}
+{"type": "tool_call", "step": 1, "name": "test_tool", "args": {"arg": "value"}, "ts": 1756904316}
+{"type": "tool_result", "step": 1, "name": "test_tool", "ok": true, "result_preview": "{\"result\": \"success\"}", "result": {"result": "success"}, "ts": 1756904316}
+{"type": "model_result", "step": 1, "assistant_preview": "Test response", "assistant_text": "Test response", "ts": 1756904316}
+{"type": "step_completed", "step": 1, "ts": 1756904316}
+{"type": "run_completed", "ts": 1756904316}

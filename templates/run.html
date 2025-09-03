@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Agent Run — {{ run_id }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script defer src="{{ url_for('static', filename='client.js') }}"></script>
+</head>
+<body>
+  <div class="container">
+    <aside class="legend">
+      <h2>Prompt structure</h2>
+      <ol>
+        <li>Task context</li>
+        <li>Tone context</li>
+        <li>Background data, documents, images</li>
+        <li>Detailed task & rules</li>
+        <li>Examples</li>
+        <li>Conversation history</li>
+        <li>Immediate request</li>
+        <li>Thinking (hidden)</li>
+        <li>Output formatting</li>
+        <li>Prefill</li>
+      </ol>
+    </aside>
+
+    <main>
+      <header>
+        <h1>Run {{ run_id }}</h1>
+        <form id="next-form" method="post" action="{{ url_for('next_step', run_id=run_id) }}">
+          <button type="submit">▶ Run next step</button>
+        </form>
+      </header>
+
+      <section id="prompt-card" class="card">
+        <h3>Prompt sent to model (step <span id="step-num">–</span>)</h3>
+        <pre id="prompt-text">(no prompt yet)</pre>
+      </section>
+
+      <section id="traces" class="card">
+        <h3>Tool traces</h3>
+        <div id="tool-traces">(no tool calls yet)</div>
+      </section>
+
+      <section id="assistant" class="card">
+        <h3>Assistant response</h3>
+        <pre id="assistant-text">(no response yet)</pre>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
