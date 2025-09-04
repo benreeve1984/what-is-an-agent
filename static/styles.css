@@ -6,12 +6,12 @@
   --border: #e6e3de;
   
   /* Section colors matching Anthropic's prompt structure */
-  --section-1: #f4b4a0;  /* Task context - coral/orange */
-  --section-2: #f5d4a1;  /* Tone context - yellow/gold */
-  --section-3: #b8d4b0;  /* Background data - green */
-  --section-4: #a8c8d8;  /* Task rules - light blue */
-  --section-5: #b4b8e0;  /* Examples - purple/blue */
-  --section-6: #d4b4d4;  /* Conversation history - purple */
+  --section-1: #f4b4a0;  /* System Role - coral/orange */
+  --section-2: #a8c8d8;  /* User's Request - light blue (prominent) */
+  --section-3: #b8d4b0;  /* Approach & Guidelines - green */
+  --section-4: #f5d4a1;  /* Available Tools - yellow/gold */
+  --section-5: #b4b8e0;  /* History - purple/blue */
+  --section-6: #d4b4d4;  /* Current State - purple */
   /* Section 7 removed - tool results are in history */
   --section-8: #e8b4a0;  /* Thinking - brown/orange */
   --section-9: #c8c8c8;  /* Output formatting - gray */
@@ -212,20 +212,20 @@ button:active {
 }
 .section-1 { background-color: var(--section-1); }
 
-.section-approach_guidelines {
-  background-color: rgba(245, 212, 161, 0.15);
+.section-user_task {
+  background-color: rgba(168, 200, 216, 0.15);
   border-left-color: var(--section-2);
 }
 .section-2 { background-color: var(--section-2); }
 
-.section-available_tools {
+.section-approach_guidelines {
   background-color: rgba(184, 212, 176, 0.15);
   border-left-color: var(--section-3);
 }
 .section-3 { background-color: var(--section-3); }
 
-.section-user_task {
-  background-color: rgba(168, 200, 216, 0.15);
+.section-available_tools {
+  background-color: rgba(245, 212, 161, 0.15);
   border-left-color: var(--section-4);
 }
 .section-4 { background-color: var(--section-4); }

@@ -7,14 +7,17 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for
 from events import RunLogger
 
 
-def create_app(run_dir: Path, gate_event: threading.Event):
+def create_app(run_dir: Path, gate_event: threading.Event, compression_event: threading.Event = None, agent = None):
     """Create Flask app with shared state."""
     app = Flask(__name__)
     
     # Shared state
     app.run_dir = run_dir
     app.gate_event = gate_event
+    app.compression_event = compression_event
+    app.agent = agent
     app.logger = RunLogger(run_dir)
+    app.compressed_state = None
     
     @app.route('/')
     def index():
@@ -48,6 +51,15 @@ def create_app(run_dir: Path, gate_event: threading.Event):
             app.gate_event.set()
         return '', 204
     
+    @app.route('/run/<run_id>/compress', methods=['POST'])
+    def compress_history(run_id):
+        """Compress the conversation history."""
+        if hasattr(app, 'compression_event') and app.compression_event:
+            # Signal that compression was requested
+            app.compression_event.set()
+            return jsonify({"status": "compression_requested", "message": "History will be compressed before next step"})
+        return jsonify({"status": "error", "message": "Compression not available"}), 400
+    
     return app
 
 
@@ -57,6 +69,7 @@ if __name__ == '__main__':
     
     run_dir = Path("runs") / datetime.now().strftime("%Y-%m-%d_%H%M%S")
     gate_event = threading.Event()
+    compression_event = threading.Event()
     
-    app = create_app(run_dir, gate_event)
-    app.run(debug=True, port=5000)
+    app = create_app(run_dir, gate_event, compression_event, None)
+    app.run(debug=True, port=5001)

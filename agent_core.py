@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
+import tiktoken
 
 # Load environment variables from .env file
 load_dotenv()
@@ -228,7 +229,7 @@ class AgentIO:
     def on_tool_call(self, tool_name: str, params: Dict): pass
     def on_tool_result(self, tool_name: str, result: Any): pass
     def on_model_request(self, prompt: str): pass
-    def on_model_request_with_sections(self, prompt: str, sections: Dict): pass
+    def on_model_request_with_sections(self, prompt: str, sections: Dict, token_counts: Dict = None): pass
     def on_model_result(self, assistant_text: str): pass
     def on_step_end(self, step: int, result: StepResult): pass
 
@@ -249,8 +250,74 @@ class Agent:
             raise ValueError("Missing OPENAI_API_KEY")
         self.client = OpenAI(api_key=api_key)
         
+        # Initialize tokenizer for GPT models
+        try:
+            self.encoding = tiktoken.encoding_for_model("gpt-4")
+        except:
+            # Fallback to cl100k_base encoding if model-specific encoding not found
+            self.encoding = tiktoken.get_encoding("cl100k_base")
+        
         # Initialize tools that need access to tables
         self._init_tools()
+    
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in a text string."""
+        if not text:
+            return 0
+        return len(self.encoding.encode(text))
+    
+    def count_section_tokens(self, sections: Dict[str, str]) -> Dict[str, int]:
+        """Count tokens for each section."""
+        token_counts = {}
+        for key, content in sections.items():
+            if content:
+                token_counts[key] = self.count_tokens(content)
+            else:
+                token_counts[key] = 0
+        token_counts["total"] = sum(token_counts.values())
+        return token_counts
+    
+    def compress_conversation_history(self, history_text: str) -> str:
+        """Compress conversation history using GPT to maintain coherent narrative."""
+        if not history_text or self.count_tokens(history_text) < 500:
+            # Don't compress if history is short
+            return history_text
+        
+        compression_prompt = f"""You are a helpful assistant that compresses conversation histories while preserving critical information.
+        
+Please compress the following conversation history into a concise summary that:
+1. Preserves the sequence of actions taken and their outcomes
+2. Keeps track of what data has been loaded and analyzed
+3. Maintains key findings and insights discovered
+4. Notes any errors encountered and how they were resolved
+5. Preserves specific numeric results and important details
+6. Maintains the narrative flow so the agent can continue from where it left off
+
+Original conversation history:
+{history_text}
+
+Provide a compressed version that maintains all essential information but reduces redundancy. Format it as a clear, sequential narrative.
+"""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Use GPT-4o-mini for compression
+                messages=[{"role": "user", "content": compression_prompt}],
+                max_completion_tokens=2000,
+                temperature=0.3  # Lower temperature for more consistent compression
+            )
+            
+            compressed = response.choices[0].message.content
+            
+            # Add a marker to indicate compression
+            compressed = f"""[COMPRESSED HISTORY - Original: {self.count_tokens(history_text)} tokens, Compressed: {self.count_tokens(compressed)} tokens]
+
+{compressed}"""
+            
+            return compressed
+        except Exception as e:
+            print(f"Error compressing history: {e}")
+            return history_text  # Return original if compression fails
     
     def _init_tools(self):
         """Initialize built-in tools."""
@@ -322,37 +389,33 @@ class Agent:
         sections = {}
         
         # Section 1: System Role (who the agent is)
-        sections["system_role"] = """You are a senior financial analyst with expertise in data analysis and visualization.
-Your role is to analyze business data, identify patterns, and provide actionable insights."""
+        sections["system_role"] = """You are a senior financial analyst with expertise in data analysis and visualization."""
         
-        # Section 2: Approach & Guidelines (combined to avoid duplication)
-        sections["approach_guidelines"] = """## Your Approach:
-1. First, discover and understand available data
-2. Load the relevant data files into memory
-3. Examine the data structure thoroughly
-4. Execute analysis using SQL and statistics
-5. Create visualizations to support findings
-6. Provide comprehensive insights
+        # Section 2: USER REQUEST - MOVED UP FOR PROMINENCE
+        goal = state.get("goal", "Analyze the data")
+        sections["user_task"] = f"""## 🎯 PRIMARY OBJECTIVE - USER'S REQUEST:
+        
+{goal}
 
-## Guidelines:
-- Start by discovering available data files
-- Load CSV files and examine their structure
-- Use SQL for data transformations and analysis
-- Create multiple visualizations as requested
-- Provide specific, quantified insights (3-5 as requested)
-- Complete ALL aspects of the user's request before summarizing
-- Only mark analysis as complete when all requirements are met
-- Be thorough - don't stop after initial exploration"""
+**This is your main task. Focus on fulfilling all aspects of this request.**"""
         
-        # Section 3: Available Tools
+        # Section 3: Approach & Guidelines (simplified)
+        sections["approach_guidelines"] = """## Approach:
+1. Discover and load relevant data files
+2. Analyze using SQL and statistics
+3. Create visualizations
+4. Provide specific, quantified insights
+
+## Key Guidelines:
+- Complete ALL aspects of the user's request
+- Be thorough - don't stop after initial exploration
+- Provide 3-5 specific insights with quantified impacts"""
+        
+        # Section 4: Available Tools
         sections["available_tools"] = f"""## Tool Usage:
 Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</tool>
 
 {self.registry.get_instructions()}"""
-        
-        # Section 4: User's Task/Goal (the original request)
-        goal = state.get("goal", "Analyze the data")
-        sections["user_task"] = f"## User's Request:\n{goal}"
         
         # Section 5: Conversation History - FULL conversation with all tool results
         messages = state.get("messages", [])
@@ -378,7 +441,13 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
                     # Other user messages
                     history_parts.append(f"\nUser:\n{msg['content']}")
         
-        sections["conversation_history"] = "\n".join(history_parts) if history_parts else ""
+        if history_parts:
+            sections["conversation_history"] = """## 📝 CONVERSATION HISTORY & PREVIOUS WORK:
+**Review what you've already attempted and continue from where you left off.**
+
+""" + "\n".join(history_parts)
+        else:
+            sections["conversation_history"] = ""
         
         # Section 6: Current State (tables, errors, progress)
         self.context_mgr.update_state()
@@ -402,38 +471,42 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         # Extract sections from the messages
         for msg in messages:
             if msg["role"] == "system":
-                # System message contains role, guidelines, and tools
+                # System message now contains everything including user task
                 content = msg["content"]
                 
-                # Split the system message into sections
-                parts = content.split("\n## ")
+                # Extract system role (before first ##)
+                first_section = content.find("\n##")
+                if first_section > -1:
+                    sections["system_role"] = content[:first_section].strip()
                 
-                # Section 1: System Role (first part before "Your Approach")
-                if parts[0]:
-                    sections["system_role"] = parts[0].strip()
+                # Extract user task
+                task_start = content.find("## 🎯 PRIMARY OBJECTIVE")
+                if task_start > -1:
+                    task_end = content.find("\n## Your Approach:", task_start)
+                    if task_end > -1:
+                        sections["user_task"] = content[task_start:task_end].strip()
+                    else:
+                        sections["user_task"] = content[task_start:].strip()
                 
-                # Section 2 & 3: Extract from rest of system message
-                approach = ""
-                tools = ""
-                for part in parts[1:]:
-                    if part.startswith("Your Approach:"):
-                        approach += "## " + part
-                    elif part.startswith("Tool Usage:"):
-                        tools = "## " + part
-                    elif part.startswith("Guidelines:"):
-                        if approach:
-                            approach += "\n\n## " + part
+                # Extract approach and guidelines
+                approach_start = content.find("## Your Approach:")
+                if approach_start > -1:
+                    approach_end = content.find("\n## Tool Usage:", approach_start)
+                    guidelines_start = content.find("## Key Guidelines:")
+                    if guidelines_start > -1:
+                        guidelines_end = len(content)
+                        approach_text = content[approach_start:approach_end].strip() if approach_end > -1 else ""
+                        guidelines_text = content[guidelines_start:guidelines_end].strip()
+                        sections["approach_guidelines"] = approach_text + "\n\n" + guidelines_text
                 
-                sections["approach_guidelines"] = approach
-                sections["available_tools"] = tools
-                
-            elif msg["role"] == "user":
-                content = msg["content"]
-                if "Task:" in content and not sections.get("user_task"):
-                    # Extract the task/goal
-                    task_start = content.index("Task:") + 5
-                    task_end = content.find("\n\n### Current State") if "### Current State" in content else len(content)
-                    sections["user_task"] = content[task_start:task_end].strip()
+                # Extract tools section
+                tools_start = content.find("## Tool Usage:")
+                if tools_start > -1:
+                    tools_end = content.find("\n## Key Guidelines:", tools_start)
+                    if tools_end > -1:
+                        sections["available_tools"] = content[tools_start:tools_end].strip()
+                    else:
+                        sections["available_tools"] = content[tools_start:].strip()
         
         # Section 5: Conversation history - clean, without redundant sections
         history_parts = []
@@ -464,7 +537,13 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
                         history_parts.append(f"\n[Tool Results]:")
                         history_parts.append(tool_results.replace("### Tool Execution Results:", "").strip())
         
-        sections["conversation_history"] = "\n".join(history_parts) if history_parts else ""
+        if history_parts:
+            sections["conversation_history"] = """## 📝 CONVERSATION HISTORY & PREVIOUS WORK:
+**Review what you've already attempted and continue from where you left off.**
+
+""" + "\n".join(history_parts)
+        else:
+            sections["conversation_history"] = ""
         
         # Section 6: Current state
         self.context_mgr.update_state()
@@ -486,24 +565,24 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         """Compose the full prompt for the model from sections."""
         sections = self.compose_prompt_sections(state)
         
-        # Combine sections in logical order
+        # Combine sections in NEW order for maximum prominence of user request
         prompt_parts = []
         
         # 1. System role - who the agent is
         if sections.get("system_role"):
             prompt_parts.append(sections["system_role"])
         
-        # 2. Approach and guidelines - how to work
+        # 2. USER'S TASK - MOVED UP FOR PROMINENCE
+        if sections.get("user_task"):
+            prompt_parts.append(sections["user_task"])
+        
+        # 3. Approach and guidelines - how to work
         if sections.get("approach_guidelines"):
             prompt_parts.append(sections["approach_guidelines"])
         
-        # 3. Available tools - what can be used
+        # 4. Available tools - what can be used
         if sections.get("available_tools"):
             prompt_parts.append(sections["available_tools"])
-        
-        # 4. User's task - what needs to be done
-        if sections.get("user_task"):
-            prompt_parts.append(sections["user_task"])
         
         # 5. Conversation history - what's been discussed
         if sections.get("conversation_history"):
@@ -527,12 +606,16 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         messages = self._build_messages(state)
         
         # Compose prompt sections based on actual messages being sent
+        # Pass the goal from state to ensure User's Task is populated
         prompt_sections = self.compose_prompt_sections_from_messages(messages, state)
         prompt = self.compose_prompt_from_messages(messages)
         
-        # Pass both sections and full prompt to IO
+        # Calculate token counts for each section
+        token_counts = self.count_section_tokens(prompt_sections)
+        
+        # Pass both sections and full prompt to IO with token counts
         if hasattr(self.io, 'on_model_request_with_sections'):
-            self.io.on_model_request_with_sections(prompt, prompt_sections)
+            self.io.on_model_request_with_sections(prompt, prompt_sections, token_counts)
         else:
             self.io.on_model_request(prompt)
         
@@ -587,6 +670,14 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         
         # Build new state
         new_messages = state.get("messages", []).copy()
+        
+        # For the first message, we need to add an initial context
+        if not new_messages:
+            # This is the first response, add initial context
+            self.context_mgr.update_state()
+            initial_context = self.context_mgr.get_state_context()
+            new_messages.append({"role": "user", "content": initial_context})
+        
         new_messages.append({"role": "assistant", "content": assistant_text})
         
         if tool_traces:
@@ -637,47 +728,140 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
     
     def _build_messages(self, state: Dict[str, Any]) -> List[Dict[str, str]]:
         """Build messages for OpenAI API."""
+        # Get the user's goal - it should always be in state
+        goal = state.get("goal", "Analyze the data")
+        
+        # Build system prompt with user task prominently included
         system_prompt = f"""You are a senior financial analyst with expertise in data analysis and visualization.
-Your role is to analyze business data, identify patterns, and provide actionable insights.
+
+## 🎯 PRIMARY OBJECTIVE - USER'S REQUEST:
+
+{goal}
+
+**This is your main task. Focus on fulfilling all aspects of this request.**
 
 ## Your Approach:
-1. First, discover and understand available data
-2. Load the relevant data files into memory
-3. Examine the data structure thoroughly
-4. Execute analysis using SQL and statistics
-5. Create visualizations to support findings
-6. Provide comprehensive insights
+1. Discover and load relevant data files
+2. Analyze using SQL and statistics
+3. Create visualizations
+4. Provide specific, quantified insights
 
 ## Tool Usage:
 Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</tool>
 
 {self.registry.get_instructions()}
 
-## Guidelines:
-- Start by discovering available data files
-- Load CSV files and examine their structure
-- Use SQL for data transformations and analysis
-- Create multiple visualizations as requested
-- Provide specific, quantified insights (3-5 as requested)
-- Complete ALL aspects of the user's request before summarizing
-- Only mark analysis as complete when all requirements are met
+## Key Guidelines:
+- Complete ALL aspects of the user's request above
 - Be thorough - don't stop after initial exploration
+- Provide 3-5 specific insights with quantified impacts
 """
         
         messages = [{"role": "system", "content": system_prompt}]
         
         if "messages" not in state or not state["messages"]:
-            # Initial message
+            # Initial message - just add the current context
             self.context_mgr.update_state()
             initial_context = self.context_mgr.get_state_context()
-            goal = state.get("goal", "Analyze the data")
-            messages.append({"role": "user", "content": f"Task: {goal}\n\n{initial_context}"})
+            messages.append({"role": "user", "content": initial_context})
         else:
             # Add conversation history
             for msg in state["messages"]:
-                messages.append({"role": msg["role"], "content": msg["content"]})
+                # Skip the initial task message since task is now in system prompt
+                if msg["role"] == "user" and msg["content"].startswith("Task:"):
+                    # Replace with just the context part
+                    context_start = msg["content"].find("\n\n")
+                    if context_start > -1:
+                        messages.append({"role": "user", "content": msg["content"][context_start+2:]})
+                    else:
+                        continue
+                else:
+                    messages.append({"role": msg["role"], "content": msg["content"]})
         
         return messages
+    
+    def compress_state_history(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Compress the conversation history in the current state."""
+        new_state = state.copy()
+        messages = new_state.get("messages", [])
+        
+        if not messages:
+            return new_state
+        
+        # Extract conversation history text
+        history_parts = []
+        for msg in messages:
+            if msg["role"] == "assistant":
+                history_parts.append(f"Assistant: {msg['content']}")
+            elif msg["role"] == "user" and "Tool Execution Results" in msg["content"]:
+                history_parts.append(f"Tool Results: {msg['content']}")
+        
+        if not history_parts:
+            return new_state
+        
+        history_text = "\n\n".join(history_parts)
+        
+        # Compress the history
+        compressed = self.compress_conversation_history(history_text)
+        
+        # Create new messages with compressed history
+        new_messages = []
+        # Keep the initial task message if it exists
+        if messages and messages[0]["role"] == "user" and "Task:" in messages[0]["content"]:
+            new_messages.append(messages[0])
+        
+        # Add compressed history as a single message
+        new_messages.append({
+            "role": "assistant",
+            "content": compressed
+        })
+        
+        # Add a continuation prompt
+        new_messages.append({
+            "role": "user", 
+            "content": "Continue with your analysis based on the compressed history above."
+        })
+        
+        new_state["messages"] = new_messages
+        return new_state
+    
+    def run_loop_with_compression(self, state: Dict[str, Any], gate: Callable[[], None], compression_event: Any) -> Tuple[str, List[StepResult]]:
+        """Run the agent loop with gating and compression support."""
+        results = []
+        current_state = state.copy()
+        
+        for step in range(1, self.config.max_steps + 1):
+            # Check if compression was requested before this step
+            if compression_event and compression_event.is_set():
+                print("\n🗜️ Compressing conversation history...")
+                current_state = self.compress_state_history(current_state)
+                compression_event.clear()
+                print("✅ History compressed successfully")
+                
+                # Log compression event
+                if hasattr(self.io, 'logger'):
+                    self.io.logger.log_event({
+                        "type": "history_compressed",
+                        "step": step,
+                        "ts": self.io.logger._timestamp()
+                    })
+            
+            # Gate before each step
+            gate()
+            
+            # Run step
+            current_state["step"] = step
+            result = self.run_step(current_state)
+            results.append(result)
+            
+            # Update state
+            current_state = result.new_state
+            
+            # Check if complete
+            if result.is_complete:
+                return result.assistant_text, results
+        
+        return "Analysis incomplete - max steps reached.", results
     
     def run_loop(self, state: Dict[str, Any], gate: Callable[[], None]) -> Tuple[str, List[StepResult]]:
         """Run the agent loop with gating."""

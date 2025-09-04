@@ -9,13 +9,13 @@
 <body>
   <div class="container">
     <aside class="legend">
-      <h2>Prompt structure</h2>
+      <h2>Context structure</h2>
       <ol>
         <li class="section-1">System Role</li>
-        <li class="section-2">Approach & Guidelines</li>
-        <li class="section-3">Available Tools</li>
-        <li class="section-4">User's Task</li>
-        <li class="section-5">History (incl. tool responses)</li>
+        <li class="section-2">🎯 User's Request (Primary Objective)</li>
+        <li class="section-3">Approach & Guidelines</li>
+        <li class="section-4">Available Tools</li>
+        <li class="section-5">📝 Conversation History & Previous Work</li>
         <li class="section-6">Current State</li>
       </ol>
     </aside>
@@ -23,23 +23,29 @@
     <main>
       <header>
         <h1>Run {{ run_id }}</h1>
-        <form id="next-form" method="post" action="{{ url_for('next_step', run_id=run_id) }}">
-          <button type="submit">▶ Run next step</button>
-        </form>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <form id="next-form" method="post" action="{{ url_for('next_step', run_id=run_id) }}">
+            <button type="submit">▶ Run next step</button>
+          </form>
+          <button id="compress-btn" onclick="compressHistory()">🗜️ Compress History</button>
+          <div id="token-info" style="margin-left: auto; font-size: 14px; color: #666;">
+            Total tokens: <span id="total-tokens">–</span>
+          </div>
+        </div>
       </header>
 
       <section id="prompt-card" class="card">
-        <h3>Prompt sent to model (step <span id="step-num">–</span>)</h3>
+        <h3>Context sent to model (step <span id="step-num">–</span>)</h3>
         <div id="prompt-sections">
           <!-- Sections will be rendered here with colors -->
           <div id="prompt-fallback">
-            <pre id="prompt-text">(no prompt yet)</pre>
+            <pre id="prompt-text">(no context yet)</pre>
           </div>
         </div>
       </section>
 
       <section id="assistant" class="card">
-        <h3>Agent response</h3>
+        <h3 id="assistant-header">Agent response</h3>
         <pre id="assistant-text">(no response yet)</pre>
       </section>
 

@@ -70,8 +70,8 @@ class RunLogger:
             "ts": self._timestamp()
         })
     
-    def model_request(self, prompt: str, sections: dict = None):
-        """Log model request event with optional sections."""
+    def model_request(self, prompt: str, sections: dict = None, token_counts: dict = None):
+        """Log model request event with optional sections and token counts."""
         event = {
             "type": "model_request",
             "step": self.current_step,
@@ -82,6 +82,10 @@ class RunLogger:
         # Add sections if provided
         if sections:
             event["prompt_sections"] = sections
+        
+        # Add token counts if provided
+        if token_counts:
+            event["token_counts"] = token_counts
         
         self.log_event(event)
     

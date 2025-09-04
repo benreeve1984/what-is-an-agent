@@ -1,5 +1,6 @@
 // Client-side JavaScript for agent run visualization with colored prompt sections
 let lastEventCount = 0;
+let lastModelResponseStep = -1;
 
 async function fetchEvents() {
   try {
@@ -21,14 +22,14 @@ function last(arr, pred) {
   return filtered[filtered.length - 1]; 
 }
 
-function renderPromptSections(sections) {
+function renderPromptSections(sections, tokenCounts) {
   // Define the correct order of sections and their display names
   const sectionOrder = [
     { key: "system_role", name: "1. System Role" },
-    { key: "approach_guidelines", name: "2. Approach & Guidelines" },
-    { key: "available_tools", name: "3. Available Tools" },
-    { key: "user_task", name: "4. User's Task" },
-    { key: "conversation_history", name: "5. History (incl. tool responses)" },
+    { key: "user_task", name: "2. 🎯 User's Request (Primary Objective)" },
+    { key: "approach_guidelines", name: "3. Approach & Guidelines" },
+    { key: "available_tools", name: "4. Available Tools" },
+    { key: "conversation_history", name: "5. 📝 Conversation History & Previous Work" },
     { key: "current_state", name: "6. Current State" }
   ];
   
@@ -44,7 +45,12 @@ function renderPromptSections(sections) {
       
       const labelDiv = document.createElement("div");
       labelDiv.className = "prompt-section-label";
-      labelDiv.textContent = section.name;
+      let labelText = section.name;
+      // Add token count if available
+      if (tokenCounts && tokenCounts[section.key]) {
+        labelText += ` (${tokenCounts[section.key]} tokens)`;
+      }
+      labelDiv.textContent = labelText;
       
       const contentPre = document.createElement("pre");
       contentPre.className = "prompt-section-content";
@@ -74,8 +80,13 @@ function render(events) {
   // Update prompt - either with sections or fallback to raw text
   if (modelReq) {
     if (modelReq.prompt_sections) {
-      // Render color-coded sections
-      renderPromptSections(modelReq.prompt_sections);
+      // Render color-coded sections with token counts
+      renderPromptSections(modelReq.prompt_sections, modelReq.token_counts);
+      
+      // Update total token count
+      if (modelReq.token_counts && modelReq.token_counts.total) {
+        document.getElementById("total-tokens").textContent = modelReq.token_counts.total.toLocaleString();
+      }
     } else if (modelReq.prompt) {
       // Fallback to raw prompt text
       const fallback = document.getElementById("prompt-sections");
@@ -85,8 +96,33 @@ function render(events) {
 
   // Update assistant response (shown BEFORE tool traces)
   const assistantText = document.getElementById("assistant-text");
+  const assistantHeader = document.getElementById("assistant-header");
+  
   if (modelRes && modelRes.assistant_text) {
+    // Show the complete LLM response, not just parsed tool calls
     assistantText.textContent = modelRes.assistant_text;
+    
+    // Check if this is a final response (no tool calls and contains completion keywords)
+    const isFinalResponse = toolCalls.length === 0 && (
+      modelRes.assistant_text.toLowerCase().includes("## final") ||
+      modelRes.assistant_text.toLowerCase().includes("## conclusion") ||
+      modelRes.assistant_text.toLowerCase().includes("## summary") ||
+      modelRes.assistant_text.toLowerCase().includes("final answer:") ||
+      modelRes.assistant_text.toLowerCase().includes("analysis complete")
+    );
+    
+    if (isFinalResponse) {
+      assistantHeader.textContent = "Final Agent Response";
+      assistantHeader.style.color = "#28a745"; // Green color for final response
+    } else {
+      assistantHeader.textContent = "Agent response";
+      assistantHeader.style.color = ""; // Reset to default color
+    }
+    
+    assistantText.parentElement.style.display = "block";
+  } else if (modelRes) {
+    // If there's a model result but no assistant_text, still show it
+    assistantText.textContent = "(Waiting for response...)";
     assistantText.parentElement.style.display = "block";
   } else {
     assistantText.parentElement.style.display = "none";
@@ -146,14 +182,43 @@ function render(events) {
     }
   }
   
-  // Check if run is complete
+  // Check if run is complete or if we need to re-enable the button
   const runCompleted = events.some(e => e.type === "run_completed");
+  const button = document.querySelector("#next-form button");
+  
   if (runCompleted) {
-    const button = document.querySelector("#next-form button");
     button.textContent = "✓ Run complete";
     button.disabled = true;
     button.style.opacity = "0.5";
     button.style.cursor = "not-allowed";
+    waitingForResponse = false;
+  } else if (waitingForResponse && modelRes && modelRes.assistant_text && modelRes.step > lastModelResponseStep) {
+    // We were waiting for a response and now have received a NEW one for the current step
+    lastModelResponseStep = modelRes.step;
+    
+    // Check if this is a final response
+    const isFinalResponse = toolCalls.length === 0 && (
+      modelRes.assistant_text.toLowerCase().includes("## final") ||
+      modelRes.assistant_text.toLowerCase().includes("## conclusion") ||
+      modelRes.assistant_text.toLowerCase().includes("## summary") ||
+      modelRes.assistant_text.toLowerCase().includes("final answer:") ||
+      modelRes.assistant_text.toLowerCase().includes("analysis complete")
+    );
+    
+    if (isFinalResponse) {
+      // Don't re-enable the button for final responses
+      button.textContent = "✓ Run complete";
+      button.disabled = true;
+      button.style.opacity = "0.5";
+      button.style.cursor = "not-allowed";
+    } else {
+      // Re-enable the button for non-final responses
+      button.textContent = "▶ Run next step";
+      button.disabled = false;
+      button.style.opacity = "";
+      button.style.cursor = "";
+    }
+    waitingForResponse = false;
   }
 }
 
@@ -163,6 +228,9 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// Track if we're waiting for a response
+let waitingForResponse = false;
+
 // Handle form submission with AJAX
 document.getElementById("next-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -171,21 +239,61 @@ document.getElementById("next-form").addEventListener("submit", async (e) => {
   const originalText = button.textContent;
   button.textContent = "Running...";
   button.disabled = true;
+  waitingForResponse = true;
   
   try {
     await fetch(e.target.action, { method: "POST" });
-    
-    // Re-enable after a short delay
-    setTimeout(() => {
-      button.textContent = originalText;
-      button.disabled = false;
-    }, 1000);
+    // Don't re-enable immediately - wait for the response to be received
   } catch (error) {
     console.error("Error triggering next step:", error);
     button.textContent = originalText;
     button.disabled = false;
+    waitingForResponse = false;
   }
 });
+
+// Compress history function
+async function compressHistory() {
+  const btn = document.getElementById("compress-btn");
+  const originalText = btn.textContent;
+  btn.textContent = "Compressing...";
+  btn.disabled = true;
+  
+  try {
+    const response = await fetch(window.location.pathname + "/compress", { 
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      btn.textContent = "✅ Compression requested";
+      // Compression will happen before the next step
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }, 2000);
+      
+      // Show message to user
+      if (data.message) {
+        console.log(data.message);
+      }
+    } else {
+      btn.textContent = "❌ Failed";
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }, 2000);
+    }
+  } catch (error) {
+    console.error("Error compressing history:", error);
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+// Make function available globally
+window.compressHistory = compressHistory;
 
 // Start polling
 setInterval(fetchEvents, 1000);

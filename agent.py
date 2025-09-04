@@ -36,9 +36,9 @@ class LoggingAgentIO(AgentIO):
     def on_model_request(self, prompt: str):
         self.logger.model_request(prompt)
     
-    def on_model_request_with_sections(self, prompt: str, sections: dict):
+    def on_model_request_with_sections(self, prompt: str, sections: dict, token_counts: dict = None):
         """Handle model request with prompt sections for visualization."""
-        self.logger.model_request(prompt, sections)
+        self.logger.model_request(prompt, sections, token_counts)
     
     def on_model_result(self, assistant_text: str):
         self.logger.model_result(assistant_text)
@@ -65,8 +65,9 @@ def cli_gate():
 
 
 def create_server_gate():
-    """Create a server gate using threading.Event."""
+    """Create a server gate using threading.Event with compression support."""
     event = threading.Event()
+    compression_requested = threading.Event()
     
     def gate():
         event.clear()
@@ -74,7 +75,7 @@ def create_server_gate():
         event.wait()
         print("✓")
     
-    return gate, event
+    return gate, event, compression_requested
 
 
 def run_agent_cli(args):
@@ -110,14 +111,14 @@ Provide 3-5 specific insights with quantified impacts."""
     # Set up gating
     if args.browser:
         # Browser mode - start Flask server
-        gate, gate_event = create_server_gate()
+        gate, gate_event, compression_event = create_server_gate()
         
         # Import and start Flask app in thread
         from app import create_app
-        app = create_app(run_dir, gate_event)
+        app = create_app(run_dir, gate_event, compression_event, agent)
         
         def run_flask():
-            app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+            app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False)
         
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
@@ -125,7 +126,7 @@ Provide 3-5 specific insights with quantified impacts."""
         # Open browser
         import time
         time.sleep(1)  # Give Flask a moment to start
-        url = f"http://127.0.0.1:5000/run/{run_dir.name}"
+        url = f"http://127.0.0.1:5001/run/{run_dir.name}"
         print(f"🌐 Opening browser: {url}")
         webbrowser.open(url)
     else:
@@ -135,7 +136,11 @@ Provide 3-5 specific insights with quantified impacts."""
     # Run the agent
     try:
         state = {"goal": goal}
-        final_answer, results = agent.run_loop(state, gate)
+        if args.browser:
+            # Pass compression event for browser mode
+            final_answer, results = agent.run_loop_with_compression(state, gate, compression_event)
+        else:
+            final_answer, results = agent.run_loop(state, gate)
         
         print("\n" + "=" * 60)
         print("✅ ANALYSIS COMPLETE")
