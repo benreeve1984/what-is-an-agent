@@ -1,6 +1,7 @@
 """Event logging system for agent runs."""
 import json
 import os
+import math
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -35,20 +36,26 @@ class RunLogger:
             return text
         return text[:max_length] + "..."
     
+    def _make_serializable(self, obj):
+        """Ensure object is JSON serializable, handling NaN and Infinity."""
+        if isinstance(obj, float):
+            # Handle NaN and Infinity values
+            if math.isnan(obj) or math.isinf(obj):
+                return None  # Convert to null in JSON
+            return obj
+        elif isinstance(obj, (str, int, bool, type(None))):
+            return obj
+        elif isinstance(obj, dict):
+            return {k: self._make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._make_serializable(v) for v in obj]
+        else:
+            return str(obj)
+    
     def log_event(self, event: Dict[str, Any]):
         """Write event to JSONL file."""
         # Ensure all values are JSON serializable
-        def make_serializable(obj):
-            if isinstance(obj, (str, int, float, bool, type(None))):
-                return obj
-            elif isinstance(obj, dict):
-                return {k: make_serializable(v) for k, v in obj.items()}
-            elif isinstance(obj, (list, tuple)):
-                return [make_serializable(v) for v in obj]
-            else:
-                return str(obj)
-        
-        event = make_serializable(event)
+        event = self._make_serializable(event)
         
         with open(self.events_file, 'a', encoding='utf-8') as f:
             json.dump(event, f, ensure_ascii=False)
@@ -63,14 +70,20 @@ class RunLogger:
             "ts": self._timestamp()
         })
     
-    def model_request(self, prompt: str):
-        """Log model request event."""
-        self.log_event({
+    def model_request(self, prompt: str, sections: dict = None):
+        """Log model request event with optional sections."""
+        event = {
             "type": "model_request",
             "step": self.current_step,
             "prompt": prompt,
             "ts": self._timestamp()
-        })
+        }
+        
+        # Add sections if provided
+        if sections:
+            event["prompt_sections"] = sections
+        
+        self.log_event(event)
     
     def tool_call(self, name: str, args: Dict[str, Any]):
         """Log tool call event."""
@@ -90,7 +103,9 @@ class RunLogger:
                 ok = False
                 result_preview = result.get("error", "Unknown error")
             else:
-                result_preview = json.dumps(result, default=str)[:500]
+                # Use _make_serializable to handle NaN values before creating preview
+                safe_result = self._make_serializable(result)
+                result_preview = json.dumps(safe_result)[:500]
         else:
             result_preview = str(result)[:500]
         

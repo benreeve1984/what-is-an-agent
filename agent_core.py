@@ -228,6 +228,7 @@ class AgentIO:
     def on_tool_call(self, tool_name: str, params: Dict): pass
     def on_tool_result(self, tool_name: str, result: Any): pass
     def on_model_request(self, prompt: str): pass
+    def on_model_request_with_sections(self, prompt: str, sections: Dict): pass
     def on_model_result(self, assistant_text: str): pass
     def on_step_end(self, step: int, result: StepResult): pass
 
@@ -316,51 +317,205 @@ class Agent:
             examples=['<tool>create_chart(chart_type="bar", table="weekly", x="day", y="revenue", title="Revenue by Day")</tool>']
         ))
     
-    def compose_prompt(self, state: Dict[str, Any]) -> str:
-        """Compose the full prompt for the model."""
-        system_prompt = f"""You are a senior financial analyst with expertise in data analysis and visualization.
-Your role is to analyze business data, identify patterns, and provide actionable insights.
-
-## Your Approach:
+    def compose_prompt_sections(self, state: Dict[str, Any]) -> Dict[str, str]:
+        """Compose prompt sections separately for visualization."""
+        sections = {}
+        
+        # Section 1: System Role (who the agent is)
+        sections["system_role"] = """You are a senior financial analyst with expertise in data analysis and visualization.
+Your role is to analyze business data, identify patterns, and provide actionable insights."""
+        
+        # Section 2: Approach & Guidelines (combined to avoid duplication)
+        sections["approach_guidelines"] = """## Your Approach:
 1. First, discover and understand available data
-2. Create a clear analysis plan
-3. Execute analysis using appropriate tools
-4. Visualize findings effectively
-5. Provide professional insights
-
-## Tool Usage:
-Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</tool>
-
-{self.registry.get_instructions()}
+2. Load the relevant data files into memory
+3. Examine the data structure thoroughly
+4. Execute analysis using SQL and statistics
+5. Create visualizations to support findings
+6. Provide comprehensive insights
 
 ## Guidelines:
 - Start by discovering available data files
-- Examine data structure before analysis
-- Use SQL for data transformations
-- Create clear visualizations
-- Provide specific, quantified insights
-- Save intermediate results for reproducibility
-- Be mindful of your step count and complete your analysis efficiently
-"""
+- Load CSV files and examine their structure
+- Use SQL for data transformations and analysis
+- Create multiple visualizations as requested
+- Provide specific, quantified insights (3-5 as requested)
+- Complete ALL aspects of the user's request before summarizing
+- Only mark analysis as complete when all requirements are met
+- Be thorough - don't stop after initial exploration"""
         
-        # Build conversation from state
+        # Section 3: Available Tools
+        sections["available_tools"] = f"""## Tool Usage:
+Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</tool>
+
+{self.registry.get_instructions()}"""
+        
+        # Section 4: User's Task/Goal (the original request)
+        goal = state.get("goal", "Analyze the data")
+        sections["user_task"] = f"## User's Request:\n{goal}"
+        
+        # Section 5: Conversation History - FULL conversation with all tool results
         messages = state.get("messages", [])
-        if not messages:
-            # Initial state
-            self.context_mgr.update_state()
-            initial_context = self.context_mgr.get_state_context()
-            goal = state.get("goal", "Analyze the data")
-            full_prompt = f"{system_prompt}\n\nTask: {goal}\n\n{initial_context}"
-        else:
-            # Construct full conversation
-            full_prompt = system_prompt + "\n\n"
-            for msg in messages:
-                if msg["role"] == "user":
-                    full_prompt += f"User: {msg['content']}\n\n"
-                elif msg["role"] == "assistant":
-                    full_prompt += f"Assistant: {msg['content']}\n\n"
         
-        return full_prompt
+        # Show the FULL conversation history that the agent actually sees
+        history_parts = []
+        step_count = 0
+        
+        for i, msg in enumerate(messages):
+            if msg["role"] == "assistant":
+                step_count += 1
+                # Show assistant's reasoning and tool calls
+                history_parts.append(f"\n[Step {step_count}] Assistant:\n{msg['content']}")
+            elif msg["role"] == "user":
+                # Include ALL user messages including tool results
+                if "Tool Execution Results" in msg['content']:
+                    # This is a tool result message - show it in full
+                    history_parts.append(f"\n[Tool Results]:\n{msg['content']}")
+                elif "Task:" in msg['content']:
+                    # Skip the initial task (it's in section 4)
+                    continue
+                else:
+                    # Other user messages
+                    history_parts.append(f"\nUser:\n{msg['content']}")
+        
+        sections["conversation_history"] = "\n".join(history_parts) if history_parts else ""
+        
+        # Section 6: Current State (tables, errors, progress)
+        self.context_mgr.update_state()
+        current_state = self.context_mgr.get_state_context()
+        sections["current_state"] = current_state
+        
+        # Section 7: Remove - tool results are now shown in conversation history
+        sections["tool_results"] = ""  # Empty since all tool results are in conversation history
+        
+        # Remove unused sections
+        sections["examples"] = ""
+        sections["thinking"] = ""
+        sections["output_formatting"] = ""
+        
+        return sections
+    
+    def compose_prompt_sections_from_messages(self, messages: List[Dict[str, str]], state: Dict[str, Any]) -> Dict[str, str]:
+        """Compose prompt sections from the actual messages being sent to the API."""
+        sections = {}
+        
+        # Extract sections from the messages
+        for msg in messages:
+            if msg["role"] == "system":
+                # System message contains role, guidelines, and tools
+                content = msg["content"]
+                
+                # Split the system message into sections
+                parts = content.split("\n## ")
+                
+                # Section 1: System Role (first part before "Your Approach")
+                if parts[0]:
+                    sections["system_role"] = parts[0].strip()
+                
+                # Section 2 & 3: Extract from rest of system message
+                approach = ""
+                tools = ""
+                for part in parts[1:]:
+                    if part.startswith("Your Approach:"):
+                        approach += "## " + part
+                    elif part.startswith("Tool Usage:"):
+                        tools = "## " + part
+                    elif part.startswith("Guidelines:"):
+                        if approach:
+                            approach += "\n\n## " + part
+                
+                sections["approach_guidelines"] = approach
+                sections["available_tools"] = tools
+                
+            elif msg["role"] == "user":
+                content = msg["content"]
+                if "Task:" in content and not sections.get("user_task"):
+                    # Extract the task/goal
+                    task_start = content.index("Task:") + 5
+                    task_end = content.find("\n\n### Current State") if "### Current State" in content else len(content)
+                    sections["user_task"] = content[task_start:task_end].strip()
+        
+        # Section 5: Conversation history - clean, without redundant sections
+        history_parts = []
+        step_count = 0
+        
+        for msg in messages[1:]:  # Skip system message
+            if msg["role"] == "assistant":
+                step_count += 1
+                # Show assistant's response
+                history_parts.append(f"\n[Step {step_count}] Agent:")
+                history_parts.append(msg['content'])
+            elif msg["role"] == "user":
+                if "Task:" in msg['content'] and messages.index(msg) == 1:
+                    # Skip the initial task (it's in section 4)
+                    continue
+                elif "Tool Execution Results" in msg['content']:
+                    # Extract just the tool results, not the state or continuation prompt
+                    content = msg['content']
+                    # Find and extract only the tool results section
+                    if "### Tool Execution Results:" in content:
+                        end_marker = content.find("\n\n### Current State")
+                        if end_marker == -1:
+                            end_marker = content.find("\n\nContinue with")
+                        if end_marker == -1:
+                            tool_results = content
+                        else:
+                            tool_results = content[:end_marker]
+                        history_parts.append(f"\n[Tool Results]:")
+                        history_parts.append(tool_results.replace("### Tool Execution Results:", "").strip())
+        
+        sections["conversation_history"] = "\n".join(history_parts) if history_parts else ""
+        
+        # Section 6: Current state
+        self.context_mgr.update_state()
+        sections["current_state"] = self.context_mgr.get_state_context()
+        
+        # Section 7 removed - tool results are already in conversation history
+        
+        return sections
+    
+    def compose_prompt_from_messages(self, messages: List[Dict[str, str]]) -> str:
+        """Compose the full prompt from the actual messages."""
+        # This represents what's actually sent to the API
+        prompt_parts = []
+        for msg in messages:
+            prompt_parts.append(f"\n[{msg['role'].upper()}]:\n{msg['content']}")
+        return "\n".join(prompt_parts)
+    
+    def compose_prompt(self, state: Dict[str, Any]) -> str:
+        """Compose the full prompt for the model from sections."""
+        sections = self.compose_prompt_sections(state)
+        
+        # Combine sections in logical order
+        prompt_parts = []
+        
+        # 1. System role - who the agent is
+        if sections.get("system_role"):
+            prompt_parts.append(sections["system_role"])
+        
+        # 2. Approach and guidelines - how to work
+        if sections.get("approach_guidelines"):
+            prompt_parts.append(sections["approach_guidelines"])
+        
+        # 3. Available tools - what can be used
+        if sections.get("available_tools"):
+            prompt_parts.append(sections["available_tools"])
+        
+        # 4. User's task - what needs to be done
+        if sections.get("user_task"):
+            prompt_parts.append(sections["user_task"])
+        
+        # 5. Conversation history - what's been discussed
+        if sections.get("conversation_history"):
+            prompt_parts.append(sections["conversation_history"])
+        
+        # 6. Current state - what's the situation now
+        if sections.get("current_state"):
+            prompt_parts.append(sections["current_state"])
+        
+        # Section 7 removed - tool results are in conversation history
+        
+        return "\n\n".join(prompt_parts)
     
     def run_step(self, state: Dict[str, Any]) -> StepResult:
         """Run a single step of the agent."""
@@ -368,12 +523,18 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         self.context_mgr.set_step(step_num)
         self.io.on_step_start(step_num)
         
-        # Compose prompt
-        prompt = self.compose_prompt(state)
-        self.io.on_model_request(prompt)
-        
-        # Get messages for API call
+        # Get messages for API call first
         messages = self._build_messages(state)
+        
+        # Compose prompt sections based on actual messages being sent
+        prompt_sections = self.compose_prompt_sections_from_messages(messages, state)
+        prompt = self.compose_prompt_from_messages(messages)
+        
+        # Pass both sections and full prompt to IO
+        if hasattr(self.io, 'on_model_request_with_sections'):
+            self.io.on_model_request_with_sections(prompt, prompt_sections)
+        else:
+            self.io.on_model_request(prompt)
         
         # Call the model
         response = self.client.chat.completions.create(
@@ -420,9 +581,9 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         # Update state
         self.context_mgr.update_state()
         
-        # Check if complete
+        # Check if complete - look for explicit completion signals
         is_complete = any(keyword in assistant_text.lower() 
-                         for keyword in ["final", "conclusion", "summary", "insights:"])
+                         for keyword in ["## final", "## conclusion", "## summary", "final answer:", "analysis complete"])
         
         # Build new state
         new_messages = state.get("messages", []).copy()
@@ -481,10 +642,11 @@ Your role is to analyze business data, identify patterns, and provide actionable
 
 ## Your Approach:
 1. First, discover and understand available data
-2. Create a clear analysis plan
-3. Execute analysis using appropriate tools
-4. Visualize findings effectively
-5. Provide professional insights
+2. Load the relevant data files into memory
+3. Examine the data structure thoroughly
+4. Execute analysis using SQL and statistics
+5. Create visualizations to support findings
+6. Provide comprehensive insights
 
 ## Tool Usage:
 Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</tool>
@@ -493,12 +655,13 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
 
 ## Guidelines:
 - Start by discovering available data files
-- Examine data structure before analysis
-- Use SQL for data transformations
-- Create clear visualizations
-- Provide specific, quantified insights
-- Save intermediate results for reproducibility
-- Be mindful of your step count and complete your analysis efficiently
+- Load CSV files and examine their structure
+- Use SQL for data transformations and analysis
+- Create multiple visualizations as requested
+- Provide specific, quantified insights (3-5 as requested)
+- Complete ALL aspects of the user's request before summarizing
+- Only mark analysis as complete when all requirements are met
+- Be thorough - don't stop after initial exploration
 """
         
         messages = [{"role": "system", "content": system_prompt}]

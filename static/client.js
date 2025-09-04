@@ -1,4 +1,4 @@
-// Client-side JavaScript for agent run visualization
+// Client-side JavaScript for agent run visualization with colored prompt sections
 let lastEventCount = 0;
 
 async function fetchEvents() {
@@ -21,6 +21,42 @@ function last(arr, pred) {
   return filtered[filtered.length - 1]; 
 }
 
+function renderPromptSections(sections) {
+  // Define the correct order of sections and their display names
+  const sectionOrder = [
+    { key: "system_role", name: "1. System Role" },
+    { key: "approach_guidelines", name: "2. Approach & Guidelines" },
+    { key: "available_tools", name: "3. Available Tools" },
+    { key: "user_task", name: "4. User's Task" },
+    { key: "conversation_history", name: "5. History (incl. tool responses)" },
+    { key: "current_state", name: "6. Current State" }
+  ];
+  
+  const container = document.getElementById("prompt-sections");
+  container.innerHTML = "";
+  
+  // Render sections in the correct order
+  for (const section of sectionOrder) {
+    const content = sections[section.key];
+    if (content && content.trim()) {  // Only render non-empty sections
+      const sectionDiv = document.createElement("div");
+      sectionDiv.className = `prompt-section section-${section.key}`;
+      
+      const labelDiv = document.createElement("div");
+      labelDiv.className = "prompt-section-label";
+      labelDiv.textContent = section.name;
+      
+      const contentPre = document.createElement("pre");
+      contentPre.className = "prompt-section-content";
+      contentPre.textContent = content;
+      
+      sectionDiv.appendChild(labelDiv);
+      sectionDiv.appendChild(contentPre);
+      container.appendChild(sectionDiv);
+    }
+  }
+}
+
 function render(events) {
   // Find latest relevant events
   const modelReq = last(events, e => e.type === "model_request");
@@ -35,13 +71,28 @@ function render(events) {
   // Update step number
   document.getElementById("step-num").textContent = currentStep || "–";
   
-  // Update prompt
-  const promptText = document.getElementById("prompt-text");
-  if (modelReq && modelReq.prompt) {
-    promptText.textContent = modelReq.prompt;
+  // Update prompt - either with sections or fallback to raw text
+  if (modelReq) {
+    if (modelReq.prompt_sections) {
+      // Render color-coded sections
+      renderPromptSections(modelReq.prompt_sections);
+    } else if (modelReq.prompt) {
+      // Fallback to raw prompt text
+      const fallback = document.getElementById("prompt-sections");
+      fallback.innerHTML = `<pre id="prompt-text">${escapeHtml(modelReq.prompt)}</pre>`;
+    }
   }
 
-  // Update tool traces
+  // Update assistant response (shown BEFORE tool traces)
+  const assistantText = document.getElementById("assistant-text");
+  if (modelRes && modelRes.assistant_text) {
+    assistantText.textContent = modelRes.assistant_text;
+    assistantText.parentElement.style.display = "block";
+  } else {
+    assistantText.parentElement.style.display = "none";
+  }
+
+  // Update tool traces (shown AFTER assistant response)
   const tracesDiv = document.getElementById("tool-traces");
   if (toolCalls.length > 0) {
     tracesDiv.innerHTML = "";
@@ -55,7 +106,7 @@ function render(events) {
       // Tool name
       const toolHead = document.createElement("div");
       toolHead.className = "tool-head";
-      toolHead.textContent = call.name;
+      toolHead.textContent = `🔧 ${call.name}`;
       traceDiv.appendChild(toolHead);
       
       // Arguments
@@ -70,28 +121,29 @@ function render(events) {
         resultDiv.className = "result";
         
         if (result.ok) {
-          resultDiv.textContent = result.result_preview || JSON.stringify(result.result).slice(0, 500);
+          resultDiv.textContent = "✅ " + (result.result_preview || JSON.stringify(result.result).slice(0, 500));
         } else {
-          resultDiv.textContent = "Error: " + (result.result_preview || result.error || "Unknown error");
+          resultDiv.textContent = "❌ Error: " + (result.result_preview || result.error || "Unknown error");
           resultDiv.style.color = "#cc0000";
         }
         traceDiv.appendChild(resultDiv);
       } else {
         const pendingDiv = document.createElement("pre");
         pendingDiv.className = "result";
-        pendingDiv.textContent = "(pending)";
+        pendingDiv.textContent = "⏳ (pending)";
         pendingDiv.style.fontStyle = "italic";
         traceDiv.appendChild(pendingDiv);
       }
       
       tracesDiv.appendChild(traceDiv);
     });
-  }
-
-  // Update assistant response
-  const assistantText = document.getElementById("assistant-text");
-  if (modelRes && modelRes.assistant_text) {
-    assistantText.textContent = modelRes.assistant_text;
+    
+    tracesDiv.parentElement.style.display = "block";
+  } else {
+    // Hide tool traces section if no tools called
+    if (tracesDiv.innerHTML === "" || tracesDiv.innerHTML === "(no tool calls yet)") {
+      tracesDiv.parentElement.style.display = "none";
+    }
   }
   
   // Check if run is complete
@@ -103,6 +155,12 @@ function render(events) {
     button.style.opacity = "0.5";
     button.style.cursor = "not-allowed";
   }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 // Handle form submission with AJAX

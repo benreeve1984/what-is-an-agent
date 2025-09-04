@@ -11,16 +11,12 @@
     <aside class="legend">
       <h2>Prompt structure</h2>
       <ol>
-        <li>Task context</li>
-        <li>Tone context</li>
-        <li>Background data, documents, images</li>
-        <li>Detailed task & rules</li>
-        <li>Examples</li>
-        <li>Conversation history</li>
-        <li>Immediate request</li>
-        <li>Thinking (hidden)</li>
-        <li>Output formatting</li>
-        <li>Prefill</li>
+        <li class="section-1">System Role</li>
+        <li class="section-2">Approach & Guidelines</li>
+        <li class="section-3">Available Tools</li>
+        <li class="section-4">User's Task</li>
+        <li class="section-5">History (incl. tool responses)</li>
+        <li class="section-6">Current State</li>
       </ol>
     </aside>
 
@@ -34,17 +30,22 @@
 
       <section id="prompt-card" class="card">
         <h3>Prompt sent to model (step <span id="step-num">–</span>)</h3>
-        <pre id="prompt-text">(no prompt yet)</pre>
+        <div id="prompt-sections">
+          <!-- Sections will be rendered here with colors -->
+          <div id="prompt-fallback">
+            <pre id="prompt-text">(no prompt yet)</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="assistant" class="card">
+        <h3>Agent response</h3>
+        <pre id="assistant-text">(no response yet)</pre>
       </section>
 
       <section id="traces" class="card">
         <h3>Tool traces</h3>
         <div id="tool-traces">(no tool calls yet)</div>
-      </section>
-
-      <section id="assistant" class="card">
-        <h3>Assistant response</h3>
-        <pre id="assistant-text">(no response yet)</pre>
       </section>
     </main>
   </div>

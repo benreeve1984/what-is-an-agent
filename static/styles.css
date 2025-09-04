@@ -3,7 +3,23 @@
   --card: #ffffff; 
   --ink: #111; 
   --muted: #666; 
-  --border: #e6e3de; 
+  --border: #e6e3de;
+  
+  /* Section colors matching Anthropic's prompt structure */
+  --section-1: #f4b4a0;  /* Task context - coral/orange */
+  --section-2: #f5d4a1;  /* Tone context - yellow/gold */
+  --section-3: #b8d4b0;  /* Background data - green */
+  --section-4: #a8c8d8;  /* Task rules - light blue */
+  --section-5: #b4b8e0;  /* Examples - purple/blue */
+  --section-6: #d4b4d4;  /* Conversation history - purple */
+  /* Section 7 removed - tool results are in history */
+  --section-8: #e8b4a0;  /* Thinking - brown/orange */
+  --section-9: #c8c8c8;  /* Output formatting - gray */
+  --section-10: #a8a8a8; /* Prefill - dark gray */
+  
+  /* Response colors */
+  --assistant-bg: #f0f4f8;
+  --tool-bg: #f8f0e8;
 }
 
 * { 
@@ -161,4 +177,86 @@ button:active {
   content: "(no tool calls yet)";
   color: var(--muted);
   font-style: italic;
+}
+
+/* Prompt section styling */
+.prompt-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  border-left: 4px solid;
+}
+
+.prompt-section-label {
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+.prompt-section-content {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
+}
+
+/* Individual section colors - updated for new structure */
+.section-system_role {
+  background-color: rgba(244, 180, 160, 0.15);
+  border-left-color: var(--section-1);
+}
+.section-1 { background-color: var(--section-1); }
+
+.section-approach_guidelines {
+  background-color: rgba(245, 212, 161, 0.15);
+  border-left-color: var(--section-2);
+}
+.section-2 { background-color: var(--section-2); }
+
+.section-available_tools {
+  background-color: rgba(184, 212, 176, 0.15);
+  border-left-color: var(--section-3);
+}
+.section-3 { background-color: var(--section-3); }
+
+.section-user_task {
+  background-color: rgba(168, 200, 216, 0.15);
+  border-left-color: var(--section-4);
+}
+.section-4 { background-color: var(--section-4); }
+
+.section-conversation_history {
+  background-color: rgba(180, 184, 224, 0.15);
+  border-left-color: var(--section-5);
+}
+.section-5 { background-color: var(--section-5); }
+
+.section-current_state {
+  background-color: rgba(212, 180, 212, 0.15);
+  border-left-color: var(--section-6);
+}
+.section-6 { background-color: var(--section-6); }
+
+/* Section 7 removed - tool results are shown in history */
+
+/* Legend item styling to match */
+aside.legend ol li {
+  padding: 4px 8px;
+  margin: 4px 0;
+  border-radius: 4px;
+}
+
+/* Assistant response styling */
+#assistant {
+  background: var(--assistant-bg);
+}
+
+/* Tool traces in order */
+.trace {
+  background: var(--tool-bg);
 }

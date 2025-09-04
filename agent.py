@@ -36,6 +36,10 @@ class LoggingAgentIO(AgentIO):
     def on_model_request(self, prompt: str):
         self.logger.model_request(prompt)
     
+    def on_model_request_with_sections(self, prompt: str, sections: dict):
+        """Handle model request with prompt sections for visualization."""
+        self.logger.model_request(prompt, sections)
+    
     def on_model_result(self, assistant_text: str):
         self.logger.model_result(assistant_text)
     
