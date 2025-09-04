@@ -26,7 +26,14 @@ ENV/
 
 # Project-specific
 workings/
+runs/
 *.log
+test_*.py
+demo_*.py
+*_FIX.md
+*_EXPLAINED.md
+debug_*.py
+test_runs/
 
 # Keep the data folder but not necessarily the generated files
 # Uncomment if you want to exclude generated data
