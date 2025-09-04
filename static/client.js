@@ -26,10 +26,10 @@ function renderPromptSections(sections, tokenCounts) {
   // Define the correct order of sections and their display names
   const sectionOrder = [
     { key: "system_role", name: "1. System Role" },
-    { key: "user_task", name: "2. 🎯 User's Request (Primary Objective)" },
+    { key: "user_task", name: "2. User's Request (Primary Objective)" },
     { key: "approach_guidelines", name: "3. Approach & Guidelines" },
     { key: "available_tools", name: "4. Available Tools" },
-    { key: "conversation_history", name: "5. 📝 Conversation History & Previous Work" },
+    { key: "conversation_history", name: "5. Conversation History & Previous Work" },
     { key: "current_state", name: "6. Current State" }
   ];
   
@@ -68,6 +68,7 @@ function render(events) {
   const modelReq = last(events, e => e.type === "model_request");
   const modelRes = last(events, e => e.type === "model_result");
   const stepStarted = last(events, e => e.type === "step_started");
+  const compressionEvent = last(events, e => e.type === "history_compressed");
   
   // Get tool calls and results for current step
   const currentStep = stepStarted ? stepStarted.step : 0;
@@ -93,12 +94,22 @@ function render(events) {
       fallback.innerHTML = `<pre id="prompt-text">${escapeHtml(modelReq.prompt)}</pre>`;
     }
   }
+  
+  // Check if compression has been applied to this step
+  if (compressionEvent && compressionEvent.step <= currentStep) {
+    // Add a note about compression
+    const stepLabel = document.getElementById("step-num");
+    if (stepLabel && !stepLabel.textContent.includes("compressed")) {
+      stepLabel.textContent = currentStep + " (history compressed)";
+    }
+  }
 
   // Update assistant response (shown BEFORE tool traces)
   const assistantText = document.getElementById("assistant-text");
   const assistantHeader = document.getElementById("assistant-header");
   
-  if (modelRes && modelRes.assistant_text) {
+  // Always prioritize showing the model response if it exists and is for current step
+  if (modelRes && modelRes.assistant_text && modelRes.step === currentStep) {
     // Show the complete LLM response, not just parsed tool calls
     assistantText.textContent = modelRes.assistant_text;
     
@@ -267,7 +278,7 @@ async function compressHistory() {
     
     if (response.ok) {
       const data = await response.json();
-      btn.textContent = "✅ Compression requested";
+      btn.textContent = "Compression requested";
       // Compression will happen before the next step
       setTimeout(() => {
         btn.textContent = originalText;
@@ -279,7 +290,7 @@ async function compressHistory() {
         console.log(data.message);
       }
     } else {
-      btn.textContent = "❌ Failed";
+      btn.textContent = "Failed";
       setTimeout(() => {
         btn.textContent = originalText;
         btn.disabled = false;

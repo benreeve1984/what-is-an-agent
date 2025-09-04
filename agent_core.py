@@ -279,24 +279,28 @@ class Agent:
     
     def compress_conversation_history(self, history_text: str) -> str:
         """Compress conversation history using GPT to maintain coherent narrative."""
-        if not history_text or self.count_tokens(history_text) < 500:
-            # Don't compress if history is short
+        token_count = self.count_tokens(history_text)
+        if not history_text or token_count < 1000:
+            # Don't compress if history is too short
+            print(f"History too short to compress ({token_count} tokens)")
             return history_text
         
         compression_prompt = f"""You are a helpful assistant that compresses conversation histories while preserving critical information.
         
 Please compress the following conversation history into a concise summary that:
-1. Preserves the sequence of actions taken and their outcomes
-2. Keeps track of what data has been loaded and analyzed
-3. Maintains key findings and insights discovered
-4. Notes any errors encountered and how they were resolved
-5. Preserves specific numeric results and important details
-6. Maintains the narrative flow so the agent can continue from where it left off
+1. Lists all data files/tables that have been loaded and their schemas
+2. Summarizes the analysis steps completed so far
+3. Preserves all specific findings with exact numbers
+4. Notes any visualizations created
+5. Tracks errors encountered and resolutions
+6. Maintains the logical flow so work can continue
+
+Format as a structured summary with clear sections.
 
 Original conversation history:
 {history_text}
 
-Provide a compressed version that maintains all essential information but reduces redundancy. Format it as a clear, sequential narrative.
+Provide a compressed version that maintains ALL essential information but reduces redundancy. Use bullet points and clear section headers.
 """
         
         try:
@@ -767,8 +771,15 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         else:
             # Add conversation history
             for msg in state["messages"]:
+                if not msg.get("content"):
+                    continue  # Skip empty messages
+                    
+                # Check if this is a compressed history message
+                if msg["role"] == "assistant" and "[COMPRESSED HISTORY" in msg["content"]:
+                    # This is compressed history, add it as-is
+                    messages.append({"role": msg["role"], "content": msg["content"]})
                 # Skip the initial task message since task is now in system prompt
-                if msg["role"] == "user" and msg["content"].startswith("Task:"):
+                elif msg["role"] == "user" and msg["content"].startswith("Task:"):
                     # Replace with just the context part
                     context_start = msg["content"].find("\n\n")
                     if context_start > -1:
@@ -785,41 +796,57 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         new_state = state.copy()
         messages = new_state.get("messages", [])
         
-        if not messages:
+        if not messages or len(messages) < 3:  # Need at least some history to compress
+            print("Not enough history to compress")
             return new_state
         
-        # Extract conversation history text
+        # Extract ALL conversation history for compression
         history_parts = []
-        for msg in messages:
+        for i, msg in enumerate(messages):
             if msg["role"] == "assistant":
-                history_parts.append(f"Assistant: {msg['content']}")
-            elif msg["role"] == "user" and "Tool Execution Results" in msg["content"]:
-                history_parts.append(f"Tool Results: {msg['content']}")
+                history_parts.append(f"[Assistant Step {i//2 + 1}]:\n{msg['content']}")
+            elif msg["role"] == "user":
+                # Include all user messages (context, tool results, etc.)
+                if "Tool Execution Results" in msg["content"]:
+                    history_parts.append(f"[Tool Results]:\n{msg['content']}")
+                elif "### Current State" in msg["content"]:
+                    history_parts.append(f"[Context Update]:\n{msg['content']}")
+                else:
+                    history_parts.append(f"[User]:\n{msg['content']}")
         
         if not history_parts:
+            print("No history parts found to compress")
             return new_state
         
-        history_text = "\n\n".join(history_parts)
+        history_text = "\n\n---\n\n".join(history_parts)
+        
+        print(f"Compressing {len(history_parts)} messages ({self.count_tokens(history_text)} tokens)...")
         
         # Compress the history
         compressed = self.compress_conversation_history(history_text)
         
+        print(f"Compressed to {self.count_tokens(compressed)} tokens")
+        
         # Create new messages with compressed history
         new_messages = []
-        # Keep the initial task message if it exists
-        if messages and messages[0]["role"] == "user" and "Task:" in messages[0]["content"]:
+        
+        # Keep the first user message if it's the initial context
+        if messages and messages[0]["role"] == "user" and "### Current State" in messages[0]["content"]:
+            # This is the initial context, keep it
             new_messages.append(messages[0])
         
-        # Add compressed history as a single message
+        # Add compressed history as assistant message
         new_messages.append({
             "role": "assistant",
             "content": compressed
         })
         
-        # Add a continuation prompt
+        # Add current state as continuation
+        self.context_mgr.update_state()
+        current_context = self.context_mgr.get_state_context()
         new_messages.append({
             "role": "user", 
-            "content": "Continue with your analysis based on the compressed history above."
+            "content": f"{current_context}\n\nContinue your analysis based on the compressed history above. Remember your main task and complete any remaining work."
         })
         
         new_state["messages"] = new_messages
@@ -833,18 +860,61 @@ Use XML tags for tool calls: <tool>tool_name(param1="value1", param2="value2")</
         for step in range(1, self.config.max_steps + 1):
             # Check if compression was requested before this step
             if compression_event and compression_event.is_set():
-                print("\n🗜️ Compressing conversation history...")
-                current_state = self.compress_state_history(current_state)
-                compression_event.clear()
-                print("✅ History compressed successfully")
+                print("\nCompressing conversation history...")
                 
-                # Log compression event
-                if hasattr(self.io, 'logger'):
-                    self.io.logger.log_event({
-                        "type": "history_compressed",
-                        "step": step,
-                        "ts": self.io.logger._timestamp()
-                    })
+                try:
+                    # Get the original token count
+                    original_messages = current_state.get("messages", [])
+                    if not original_messages:
+                        print("No messages to compress")
+                        compression_event.clear()
+                        continue
+                        
+                    original_text = "\n".join([m["content"] for m in original_messages if m.get("content")])
+                    original_tokens = self.count_tokens(original_text)
+                    
+                    if original_tokens < 1000:
+                        print(f"History too short to compress ({original_tokens} tokens)")
+                        compression_event.clear()
+                        continue
+                    
+                    # Compress the state
+                    compressed_state = self.compress_state_history(current_state)
+                    compression_event.clear()
+                    
+                    # Get the compressed token count
+                    compressed_messages = compressed_state.get("messages", [])
+                    compressed_text = "\n".join([m["content"] for m in compressed_messages if m.get("content")])
+                    compressed_tokens = self.count_tokens(compressed_text)
+                    
+                    # Calculate compression ratio safely
+                    if original_tokens > 0:
+                        ratio = (1 - compressed_tokens/original_tokens) * 100
+                    else:
+                        ratio = 0
+                    
+                    # Log compression event with the compressed content
+                    if hasattr(self.io, 'logger'):
+                        # Log the compression summary
+                        self.io.logger.log_event({
+                            "type": "history_compressed",
+                            "step": step,
+                            "original_tokens": original_tokens,
+                            "compressed_tokens": compressed_tokens,
+                            "compression_ratio": f"{ratio:.1f}%",
+                            "compressed_history": compressed_messages,
+                            "ts": self.io.logger._timestamp()
+                        })
+                    
+                    # Update the current state
+                    current_state = compressed_state
+                    print(f"History compressed: {original_tokens} → {compressed_tokens} tokens ({ratio:.1f}% reduction)")
+                    
+                except Exception as e:
+                    print(f"Error during compression: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    compression_event.clear()
             
             # Gate before each step
             gate()

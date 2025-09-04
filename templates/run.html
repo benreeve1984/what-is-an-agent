@@ -12,10 +12,10 @@
       <h2>Context structure</h2>
       <ol>
         <li class="section-1">System Role</li>
-        <li class="section-2">🎯 User's Request (Primary Objective)</li>
+        <li class="section-2">User's Request (Primary Objective)</li>
         <li class="section-3">Approach & Guidelines</li>
         <li class="section-4">Available Tools</li>
-        <li class="section-5">📝 Conversation History & Previous Work</li>
+        <li class="section-5">Conversation History & Previous Work</li>
         <li class="section-6">Current State</li>
       </ol>
     </aside>
@@ -27,7 +27,7 @@
           <form id="next-form" method="post" action="{{ url_for('next_step', run_id=run_id) }}">
             <button type="submit">▶ Run next step</button>
           </form>
-          <button id="compress-btn" onclick="compressHistory()">🗜️ Compress History</button>
+          <button id="compress-btn" onclick="compressHistory()">Compress History</button>
           <div id="token-info" style="margin-left: auto; font-size: 14px; color: #666;">
             Total tokens: <span id="total-tokens">–</span>
           </div>
